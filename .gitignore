@@ -1,0 +1,14 @@
+# Windows 시스템 파일 제외
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VS Code 설정 폴더 제외
+.vscode/
+
+# Node.js 사용 시 패키지 폴더 제외 (용량이 커서 제외 필수)
+node_modules/
+
+# 환경변수 및 비밀키 파일 제외 (보안)
+.env
+.env.local
