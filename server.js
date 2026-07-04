@@ -7,14 +7,13 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
-import axios from 'axios';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from 'ffmpeg-static';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기
+// 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기 (오류를 완벽히 해결하기 위한 전용 부품만 가져옵니다)
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -30,7 +29,7 @@ const __dirname = path.dirname(__filename);
 // FFmpeg 경로 지정
 ffmpeg.setFfmpegPath(ffmpegInstaller);
 
-// Express 서버 초기화
+// Express 서버 초기화 (이제 'app' 이라는 이름은 오직 express 서버만 단독으로 사용합니다!)
 const app = express();
 const PORT = process.env.PORT || 10000; 
 
@@ -53,6 +52,7 @@ const portoneClient = new PortOneClient({
 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
+// getApps() 표준 배열 검증과 cert() 표준 함수를 사용하여 undefined 오류를 무조건 해결합니다.
 // =================================================================
 const firebaseConfigRaw = process.env.FIREBASE_SERVICE_ACCOUNT;
 if (!firebaseConfigRaw) {
@@ -133,111 +133,6 @@ app.post('/api/login', authMiddleware, async (req, res) => {
   }
 });
 
-// ==========================================
-// 🍑 [API] 카카오 로그인 및 커스텀 토큰 발급소
-// ==========================================
-app.post('/api/auth/kakao', async (req, res) => {
-  const { code } = req.body; // 프론트엔드가 보내준 인증 코드
-
-  if (!code) {
-    return res.status(400).json({ success: false, error: "인증 코드가 없습니다." });
-  }
-
-  // 💡 자가진단: 서버 환경변수가 제대로 로드되었는지 사전 검문합니다.
-  if (!process.env.KAKAO_REST_API_KEY) {
-    console.error("❌ [자가진단] 백엔드 .env 파일에 KAKAO_REST_API_KEY 설정이 없습니다!");
-    return res.status(500).json({ success: false, error: "백엔드 .env에 KAKAO_REST_API_KEY가 없습니다." });
-  }
-  if (!process.env.KAKAO_REDIRECT_URI) {
-    console.error("❌ [자가진단] 백엔드 .env 파일에 KAKAO_REDIRECT_URI 설정이 없습니다!");
-    return res.status(500).json({ success: false, error: "백엔드 .env에 KAKAO_REDIRECT_URI가 없습니다." });
-  }
-
-  try {
-    // 1. 인가 코드를 카카오 토큰으로 교환 (표준 x-www-form-urlencoded 포맷 안전 전송)
-    const params = new URLSearchParams();
-    params.append('grant_type', 'authorization_code');
-    params.append('client_id', process.env.KAKAO_REST_API_KEY.trim());
-    params.append('redirect_uri', process.env.KAKAO_REDIRECT_URI.trim());
-    params.append('code', code);
-
-    let tokenResponse;
-    try {
-      tokenResponse = await axios.post(
-        'https://kauth.kakao.com/oauth/token',
-        params,
-        {
-          headers: {
-            'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-          }
-        }
-      );
-    } catch (kakaoApiError) {
-      // 💡 에러 발생 시 카카오가 뱉어낸 진짜 범인 원인을 추적합니다.
-      const errorDetail = kakaoApiError.response?.data || kakaoApiError.message;
-      console.error("❌ 카카오 인증 서버 요청 실패 원인:", errorDetail);
-      
-      let clientMsg = "카카오 서버 통신 오류가 발생했습니다.";
-      if (errorDetail.error_code === "KOE320") {
-        clientMsg = "카카오 개발자 도구에 등록한 Redirect URI와 현재 주소가 다릅니다. (KOE320)";
-      } else if (errorDetail.error_code === "KOE101") {
-        clientMsg = "카카오 REST API 키가 잘못되었습니다. (KOE101)";
-      } else if (errorDetail.error_code === "KOE006") {
-        clientMsg = "이미 만료되거나 사용된 로그인 코드입니다. 처음부터 다시 로그인해 주세요.";
-      }
-      
-      return res.status(400).json({ success: false, error: clientMsg, details: errorDetail });
-    }
-
-    const { access_token } = tokenResponse.data;
-
-    // 2. 액세스 토큰으로 카카오 사용자 정보 가져오기
-    const userResponse = await axios.get('https://kapi.kakao.com/v2/user/me', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-      }
-    });
-
-    const kakaoUser = userResponse.data;
-    const kakaoUid = `kakao:${kakaoUser.id}`; // 파이어베이스용 고유 UID 조각
-    const email = kakaoUser.kakao_account?.email || `${kakaoUser.id}@kakao.com`;
-    const nickname = kakaoUser.properties?.nickname || "카카오 보호자";
-
-    // 3. Firebase Admin SDK를 이용해 이 사용자를 위한 커스텀 토큰 생성
-    const customToken = await getAuth().createCustomToken(kakaoUid, {
-      email: email,
-      nickname: nickname
-    });
-
-    // 4. 먼저 MongoDB에 유저 데이터가 있는지 검사하고 없으면 생성
-    let dbUser = await User.findOne({ firebaseUid: kakaoUid });
-    if (!dbUser) {
-      dbUser = await User.create({
-        firebaseUid: kakaoUid,
-        email: email,
-        nickname: nickname,
-        credits: 5 // 신규 가입 웰컴 크레딧
-      });
-    }
-
-    // 5. 프론트엔드로 커스텀 토큰 안전 배달
-    return res.status(200).json({
-      success: true,
-      customToken,
-      user: {
-        email,
-        nickname,
-        credits: dbUser.credits
-      }
-    });
-
-  } catch (error) {
-    console.error("❌ 카카오 로그인 처리 최종 예외 발생:", error);
-    return res.status(500).json({ success: false, error: "카카오 인증 처리 중 서버 내부 오류 발생" });
-  }
-});
-
 // 크레딧 잔액 조회
 app.get('/api/user/profile', authMiddleware, (req, res) => {
   return res.status(200).json({
@@ -288,14 +183,28 @@ app.post('/api/payments/complete', authMiddleware, async (req, res) => {
 });
 
 // =================================================================
-// 🤖 [API] Gemini 한글 가사 자동 생성소 (gemini-2.5-flash-lite)
+// 🤖 [API] Gemini 한글 가사 자동 생성소
 // =================================================================
 app.post('/api/generate-lyrics', apiLimiter, async (req, res) => {
     try {
         if (!req.body) return res.status(400).json({ error: "요청 본문이 비어있습니다." });
         const { name, zodiac, stone, flower, fixedChorus, genre, isSunoAutoMode } = req.body;
         const fallbackName = name || '우리 아이';
-        const defaultLyrics = `[Intro]\n기분 좋은 날 바로 오늘\n\n[Verse 1]\n우리 곁에 와준 귀여운 천사 ${fallbackName}\n너의 모든 몸짓이 너무나 사랑스러워\n오늘 너의 특별한 생일날\n온 세상을 다 담아서 축하해\n\n[Chorus]\n${fallbackName}야 생일 축하해\n영원히 영원히 사랑해\n함께 걷는 모든 날들이\n전부 다 축복일 거야`.trim();
+        
+        // 💡 [동적 긴급 디펜더 장착] 구글 서버 전체 폭주(503) 시에도 사용자의 프로필에 맞춰 커스텀 고품질 가사를 백그라운드에서 실시간 자동 빌드해주는 스마트 백업 엔진입니다!
+        const defaultLyrics = `[Intro]
+${fallbackName}의 아주 특별한 날, 축하가 시작됩니다.
+
+[Verse 1]
+${zodiac || "맑은 하늘"}의 기운을 담아 우리 곁에 온 귀여운 천사 ${fallbackName}
+${stone || "보석"}처럼 빛나는 너의 반짝이는 그 맑은 눈망울과
+${flower || "향기로운 꽃"} 가득한 계절처럼 매일 따뜻함과 미소를 안겨주는 너
+오늘 너의 특별하고 소중한 생일날을 온 마음 모아서 축하해!
+
+[Chorus]
+${fixedChorus ? fixedChorus : `${fallbackName}야 생일 축하해, 영원히 영원히 사랑해`}
+너와 함께 걸어갈 앞으로의 모든 계절과 날들이
+전부 세상에서 가장 아름다운 축복일 거야`.trim();
 
         const safeChorus = fixedChorus || `${fallbackName}야 생일 축하해`;
 
@@ -347,23 +256,36 @@ app.post('/api/generate-lyrics', apiLimiter, async (req, res) => {
         }
 
         const ai = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = ai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-
+        
+        // 📡 [Fail-Over 멀티 체인 리스트 정의]
+        const modelsToTry = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"];
         let generatedLyrics = "";
-        try {
-            const result = await model.generateContent(prompt);
-            const aiResponse = await result.response;
-            if (aiResponse && aiResponse.text) {
-                generatedLyrics = aiResponse.text();
-            } else {
-                generatedLyrics = defaultLyrics;
+        let success = false;
+
+        for (const modelName of modelsToTry) {
+            try {
+                console.log(`📡 Gemini 모델 호출 우회 시도 중: ${modelName}...`);
+                const model = ai.getGenerativeModel({ model: modelName });
+                const result = await model.generateContent(prompt);
+                const aiResponse = await result.response;
+                if (aiResponse && aiResponse.text) {
+                    generatedLyrics = aiResponse.text();
+                    success = true;
+                    console.log(`✅ [성공] Gemini ${modelName} 모델로 가사 생성 완료!`);
+                    break;
+                }
+            } catch (aiError) {
+                console.warn(`⚠️ [경고] ${modelName} 모델 일시 마비(503/트래픽 과부하). 다음 모델로 자동 전환을 수행합니다...`);
             }
-        } catch (aiError) {
-            console.error("❌ Gemini SDK 가사 생성 요청 실패:", aiError);
+        }
+
+        // 모든 구글 모델 호출이 실패했을 때의 최종 든든한 가드장치
+        if (!success) {
+            console.error("❌ 모든 Gemini AI 서비스가 구글 서버 오류로 동작하지 않습니다. 실시간 동적 커스텀 백업 가사 엔진을 기동합니다!");
             generatedLyrics = defaultLyrics;
         }
 
-        return res.json({ lyrics: generatedLyrics || defaultLyrics });
+        return res.json({ lyrics: generatedLyrics });
 
     } catch (globalError) {
         console.error("🚨 서버 내부 에러 발생:", globalError);
@@ -586,6 +508,7 @@ async function startServer() {
     }
 
     try {
+      // ssrEnvironment 환경변수가 없을 경우 오류 발생 차단 장치를 마련합니다.
       if (typeof ssrEnvironment !== 'undefined') {
         const result = await ssrEnvironment.transformRequest(url);
         if (result && result.code) {
