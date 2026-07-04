@@ -143,51 +143,23 @@ app.post('/api/auth/kakao', async (req, res) => {
     return res.status(400).json({ success: false, error: "인증 코드가 없습니다." });
   }
 
-  // 💡 자가진단: 서버 환경변수가 제대로 로드되었는지 사전 검문합니다.
-  if (!process.env.KAKAO_REST_API_KEY) {
-    console.error("❌ [자가진단] 백엔드 .env 파일에 KAKAO_REST_API_KEY 설정이 없습니다!");
-    return res.status(500).json({ success: false, error: "백엔드 .env에 KAKAO_REST_API_KEY가 없습니다." });
-  }
-  if (!process.env.KAKAO_REDIRECT_URI) {
-    console.error("❌ [자가진단] 백엔드 .env 파일에 KAKAO_REDIRECT_URI 설정이 없습니다!");
-    return res.status(500).json({ success: false, error: "백엔드 .env에 KAKAO_REDIRECT_URI가 없습니다." });
-  }
-
   try {
-    // 1. 인가 코드를 카카오 토큰으로 교환 (표준 x-www-form-urlencoded 포맷 안전 전송)
-    const params = new URLSearchParams();
-    params.append('grant_type', 'authorization_code');
-    params.append('client_id', process.env.KAKAO_REST_API_KEY.trim());
-    params.append('redirect_uri', process.env.KAKAO_REDIRECT_URI.trim());
-    params.append('code', code);
-
-    let tokenResponse;
-    try {
-      tokenResponse = await axios.post(
-        'https://kauth.kakao.com/oauth/token',
-        params,
-        {
-          headers: {
-            'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-          }
+    // 1. 인가 코드를 카카오 토큰으로 교환
+    const tokenResponse = await axios.post(
+      'https://kauth.kakao.com/oauth/token',
+      null,
+      {
+        params: {
+          grant_type: 'authorization_code',
+          client_id: process.env.KAKAO_REST_API_KEY,
+          redirect_uri: process.env.KAKAO_REDIRECT_URI,
+          code: code,
+        },
+        headers: {
+          'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
         }
-      );
-    } catch (kakaoApiError) {
-      // 💡 에러 발생 시 카카오가 뱉어낸 진짜 범인 원인을 추적합니다.
-      const errorDetail = kakaoApiError.response?.data || kakaoApiError.message;
-      console.error("❌ 카카오 인증 서버 요청 실패 원인:", errorDetail);
-      
-      let clientMsg = "카카오 서버 통신 오류가 발생했습니다.";
-      if (errorDetail.error_code === "KOE320") {
-        clientMsg = "카카오 개발자 도구에 등록한 Redirect URI와 현재 주소가 다릅니다. (KOE320)";
-      } else if (errorDetail.error_code === "KOE101") {
-        clientMsg = "카카오 REST API 키가 잘못되었습니다. (KOE101)";
-      } else if (errorDetail.error_code === "KOE006") {
-        clientMsg = "이미 만료되거나 사용된 로그인 코드입니다. 처음부터 다시 로그인해 주세요.";
       }
-      
-      return res.status(400).json({ success: false, error: clientMsg, details: errorDetail });
-    }
+    );
 
     const { access_token } = tokenResponse.data;
 
@@ -233,8 +205,8 @@ app.post('/api/auth/kakao', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ 카카오 로그인 처리 최종 예외 발생:", error);
-    return res.status(500).json({ success: false, error: "카카오 인증 처리 중 서버 내부 오류 발생" });
+    console.error("❌ 카카오 인증 처리 실패:", error.response?.data || error.message);
+    return res.status(500).json({ success: false, error: "카카오 인증 처리 중 에러가 발생했습니다." });
   }
 });
 

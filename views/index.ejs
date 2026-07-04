@@ -159,7 +159,7 @@
       <!-- 분기 버튼 그룹 -->
       <div class="space-y-3">
         <button onclick="triggerMusicProduction()" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold py-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2">
-          <i class="fa-solid fa-compact-disc animate-spin"></i> 💎 5 크레딧으로 음악 구워내기
+          <i class="fa-solid fa-compact-disc animate-spin"></i> 💎 5 크레딧으로 나만의 음악 구워내기
         </button>
         <div class="grid grid-cols-2 gap-3">
           <button onclick="saveLyricsOnly()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 rounded-xl transition">
@@ -353,12 +353,35 @@
       await auth.signOut();
       alert("성공적으로 로그아웃되었습니다.");
     }
+    <!-- ================================================================= -->
+    <!-- ⏳ [Suno 작사 진행 중 안내 모달] (신규 추가) -->
+    <!-- ================================================================= -->
+  <div id="suno-loading-modal" class="fixed inset-0 z-50 hidden bg-black bg-opacity-75 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl text-center space-y-4">
+      <div class="flex justify-center">
+        <div class="relative w-24 h-24 flex items-center justify-center">
+          <i class="fa-solid fa-compact-disc text-6xl text-indigo-600 animate-spin"></i>
+          <i class="fa-solid fa-wand-magic-sparkles text-2xl text-yellow-400 absolute top-0 right-0 animate-bounce"></i>
+        </div>
+      </div>
+      <h3 class="text-xl font-bold text-gray-900" id="loading-status-title">🎸 Suno AI 가사 작사 중...</h3>
+      <p class="text-sm text-gray-600 leading-relaxed">
+        우리 아이 이름(<span id="loading-pet-name" class="font-bold text-indigo-600"></span>)과 전달해주신 문구를 토대로<br>
+        Suno 엔진이 직접 음악에 붙을 가사를 고정 생성하고 있습니다.
+      </p>
+      
+      <!-- 실시간 타이머 바 -->
+      <div class="w-full bg-gray-200 rounded-full h-2.5">
+        <div id="loading-progress-bar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-1000" style="width: 0%"></div>
+      </div>
+      <p class="text-xs text-gray-400 font-mono" id="loading-timer-text">남은 예상 시간: 03:00</p>
+    </div>
+  </div>
 
     // ==========================================
-    // 🤖 [AI 가사 요청 및 모달 팝업 컨트롤 장치]
+    // 🤖 [Suno 연동 맞춤형 AI 가사 요청 및 타이머 컨트롤 장치]
     // ==========================================
     async function requestLyricsGeneration() {
-      // 1. 로그인 상태 방어벽 세우기 (스크린샷 에러를 근본적으로 막아주는 구역)
       if (!globalUserEmail) {
         alert("🐾 로그인이 필요한 서비스입니다! 우측 상단이나 팝업창을 통해 시작해 주세요.");
         openLoginModal();
@@ -379,9 +402,34 @@
         return;
       }
 
-      alert("✨ Gemini AI가 우리 아이 프로필을 바탕으로 명품 가사를 작성 중입니다...");
-
-      try {
+      // Suno 대기 애니메이션 모달 및 3분 타이머 ON
+      document.getElementById('loading-pet-name').innerText = name;
+      const loadingModal = document.getElementById('suno-loading-modal');
+      const progressBar = document.getElementById('loading-progress-bar');
+      const timerText = document.getElementById('loading-timer-text');
+      
+      loadingModal.classList.remove('hidden');
+      
+      let totalSeconds = 180; // 3분
+      let currentSeconds = 0;
+      progressBar.style.width = '0%';
+      
+      const lyricTimer = setInterval(() => {
+        currentSeconds++;
+        let percentage = (currentSeconds / totalSeconds) * 100;
+        if (percentage > 95) percentage = 95; // 실제 완료 전까지 95%에서 대기
+        
+        progressBar.style.width = `${percentage}%`;
+        
+        let minutes = Math.floor((totalSeconds - currentSeconds) / 60);
+        let seconds = (totalSeconds - currentSeconds) % 60;
+        timerText.innerText = `남은 예상 시간: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        
+        if (currentSeconds >= totalSeconds) {
+          clearInterval(lyricTimer);
+        }
+      }, 1000);
+     try {
         const response = await fetch('/api/generate-lyrics', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -391,16 +439,25 @@
           })
         });
 
-        const data = await response.json();
+       const data = await response.json();
         
-        if (data.lyrics) {
-          // 2. 가사 생성에 성공하면, 전용 팝업창(모달)을 스무스하게 드러냅니다.
-          document.getElementById('generated-lyrics-display').value = data.lyrics;
-          document.getElementById('lyrics-choice-modal').classList.remove('hidden');
-        } else {
-          alert("가사 생성에 일시적 장애가 발생했습니다. 잠시 후 시도해 주세요!");
-        }
+        clearInterval(lyricTimer);
+        progressBar.style.width = '100%';
+        
+        setTimeout(() => {
+          loadingModal.classList.add('hidden');
+          
+          if (data.lyrics) {
+            document.getElementById('generated-lyrics-display').value = data.lyrics;
+            document.getElementById('lyrics-choice-modal').classList.remove('hidden');
+          } else {
+            alert("Suno 가사 생성 엔진 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요!");
+          }
+        }, 500);
+
       } catch (err) {
+        clearInterval(lyricTimer);
+        loadingModal.classList.add('hidden');
         alert("서버 연결 실패: " + err.message);
       }
     }
@@ -411,10 +468,10 @@
 
     // [선택 1] 진짜 음악 제작 가동
     function triggerMusicProduction() {
-      if (globalUserCredits < 5) {
+     if (globalUserCredits < 5) {
         alert("💎 크레딧이 부족합니다! 충전 후 이용해 주세요.");
         return;
-      }
+     }
       const lyrics = document.getElementById('generated-lyrics-display').value;
       const genre = document.getElementById('musicGenre').value;
       const name = document.getElementById('petName').value;
