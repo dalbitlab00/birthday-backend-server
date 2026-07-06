@@ -39,7 +39,7 @@ app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
+import axios from 'axios';
 // EJS 템플릿 엔진 설정
 app.set('view engine', 'ejs');
 app.set('views', './views'); // views 폴더 안의 템플릿들을 바라봅니다.
@@ -51,6 +51,9 @@ const portoneClient = new PortOneClient({
   secret: process.env.PORTONE_API_SECRET 
 });
 
+const KAKAO_REST_API_KEY=process.env.KAKAO_REST_API_KEY;
+const REDIRECT_URI=process.env.KAKAO_REDIRECT_URI ;
+const CLIENT_SECRET=process.env.KAKAO_CLIENT_SECRET; 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
 // getApps() 표준 배열 검증과 cert() 표준 함수를 사용하여 undefined 오류를 무조건 해결합니다.
@@ -104,8 +107,8 @@ app.get('/', (req, res) => {
 });
 
 // 1. 프론트엔드가 처음 요청을 보낸 주소 (카카오 로그인 페이지로 리다이렉트)
-router.get('/auth/kakao', (req, res) => {
-    const kakaoAuthUrl = `https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${process.env.KAKAO_REST_API_KEY}&redirect_uri=${process.env.KAKAO_REDIRECT_URI}&prompt=none`;
+router.get('/api/auth/kakao', (req, res) => {
+    const kakaoAuthUrl = `https://kauth.kakao.com/oauth/authorize?client_id=${process.env.KAKAO_REST_API_KEY}&redirect_uri=${process.env.KAKAO_REDIRECT_URI}&response_type=code`;
     res.redirect(kakaoAuthUrl);
 });
 
@@ -120,6 +123,68 @@ router.get('/auth/kakao/callback', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+const kakaoLogin = async (req, res) => {
+  const { code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ success: false, message: "인가 코드가 없습니다." });
+  }
+
+  try {
+    // 1. 인가 코드를 가지고 카카오 토큰 받기 요청
+    const tokenResponse = await axios({
+      method: 'POST',
+      url: 'https://kauth.kakao.com/oauth/token',
+      headers: {
+        'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
+      },
+      data: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: REST_API_KEY,
+        redirect_uri: REDIRECT_URI,
+        code: code,
+        client_secret: CLIENT_SECRET // 설정했을 때만 전송
+      }).toString()
+    });
+
+    const { access_token } = tokenResponse.data;
+
+    // 2. 발급받은 Access Token으로 사용자 프로필 가져오기 요청
+    const userResponse = await axios({
+      method: 'GET',
+      url: 'https://kapi.kakao.com/v2/user/me',
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
+      }
+    });
+
+    const kakaoUser = userResponse.data;
+    
+    // 카카오에서 전달받은 사용자 정보 구조 예시
+    const userId = kakaoUser.id; // 고유 카카오 ID
+    const nickname = kakaoUser.properties?.nickname;
+    const email = kakaoUser.kakao_account?.email;
+
+    // 3. 우리 서비스 DB에 사용자가 존재하는지 확인 후 가입/로그인 처리
+    // (이 곳에 DB 회원가입/로그인 및 세션/JWT 발급 로직을 작성합니다)
+    const myAppToken = "GENERATE_YOUR_OWN_JWT_TOKEN"; 
+
+    return res.status(200).json({
+      success: true,
+      accessToken: myAppToken,
+      user: {
+        id: userId,
+        nickname,
+        email
+      }
+    });
+
+  } catch (error) {
+    console.error('카카오 로그인 연동 실패:', error.response?.data || error.message);
+    return res.status(500).json({ success: false, message: "카카오 통신 에러" });
+  }
+};
 
 // =================================================================
 // 🔑 [API] 회원가입 및 로그인 처리 문지기
