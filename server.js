@@ -36,7 +36,10 @@ const PORT = process.env.PORT || 10000;
 
 // 글로벌 네트워크 미들웨어 세팅
 app.set('trust proxy', 1);
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173', 
+  credentials: true 
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 import axios from 'axios';
