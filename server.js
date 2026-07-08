@@ -55,7 +55,7 @@ const portoneClient = new PortOneClient({
 });
 
 const KAKAO_REST_API_KEY=process.env.KAKAO_REST_API_KEY;
-const REDIRECT_URI=process.env.KAKAO_REDIRECT_URI ;
+const REDIRECT_URI=process.env.KAKAO_REDIRECT_URI;
 const CLIENT_SECRET=process.env.KAKAO_CLIENT_SECRET; 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
