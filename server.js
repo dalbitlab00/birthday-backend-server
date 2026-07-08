@@ -48,20 +48,20 @@ app.set('view engine', 'ejs');
 app.set('views', './views'); // views 폴더 안의 템플릿들을 바라봅니다.
 
 // API 키 및 서비스 연결 설정
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SUNO_API_KEY = process.env.SUNO_API_KEY;
+const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY;
+const SUNO_API_KEY = process.env.VITE_SUNO_API_KEY;
 const portoneClient = new PortOneClient({
   secret: process.env.PORTONE_API_SECRET 
 });
 
-const KAKAO_REST_API_KEY=process.env.KAKAO_REST_API_KEY;
-const REDIRECT_URI=process.env.KAKAO_REDIRECT_URI;
-const CLIENT_SECRET=process.env.KAKAO_CLIENT_SECRET; 
+const KAKAO_REST_API_KEY=process.env.VITE_KAKAO_REST_API_KEY;
+const REDIRECT_URI=process.env.VITE_KAKAO_REDIRECT_URI;
+const CLIENT_SECRET=process.env.VITE_KAKAO_CLIENT_SECRET; 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
 // getApps() 표준 배열 검증과 cert() 표준 함수를 사용하여 undefined 오류를 무조건 해결합니다.
 // =================================================================
-const firebaseConfigRaw = process.env.FIREBASE_SERVICE_ACCOUNT;
+const firebaseConfigRaw = process.env.VITE_FIREBASE_SERVICE_ACCOUNT;
 if (!firebaseConfigRaw) {
   console.error("❌ 환경변수에 FIREBASE_SERVICE_ACCOUNT가 설정되지 않았습니다!");
   process.exit(1);
