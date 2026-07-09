@@ -1,4 +1,4 @@
-// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
+// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.//
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -14,11 +14,11 @@ import ffmpegInstaller from 'ffmpeg-static';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기 (오류를 완벽히 해결하기 위한 전용 부품만 가져옵니다)
+// 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기 (오류를 완벽히 해결하기 위한 전용 부품만 가져옵니다)//
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
-// 💡 우리 프로젝트 안의 파일들 가져오기
+// 💡 우리 프로젝트 안의 파일들 가져오기..
 import { User } from './models/User.js';
 import { PortOneClient } from '@portone/server-sdk';
 import { authMiddleware } from './middlewares/auth.js';
@@ -83,7 +83,7 @@ if (getApps().length === 0) {
 // =================================================================
 // 🍃 [MongoDB 연결 설정]
 // =================================================================
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/birthday_maker';
+const MONGODB_URI = process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017/birthday_maker';
 mongoose.connect(MONGODB_URI)
   .then(() => console.log("🍃 MongoDB 연결 성공!"))
   .catch(err => console.error("❌ MongoDB 연결 실패:", err));
@@ -407,7 +407,7 @@ app.post('/api/generate-song', async (req, res) => {
             title: title || 'My Pet Birthday Song',
             instrumental: false,
             model: 'V4_5ALL',
-            callBackUrl: 'https://birthday-backend-server.onrender.com/api/suno-callback'
+            callBackUrl: 'https://birthday-backend-server-1.onrender.com/api/suno-callback'
         };
 
         const response = await universalFetch('https://api.sunoapi.org/api/v1/generate', {
@@ -568,7 +568,7 @@ app.post('/api/generate-video', async (req, res) => {
             .on('end', () => {
                 res.json({
                     success: true,
-                    videoUrl: `https://birthday-backend-server.onrender.com/videos/video_${uniqueId}.mp4`
+                    videoUrl: `https://birthday-backend-server0-1.onrender.com/videos/video_${uniqueId}.mp4`
                 });
                 try {
                     fs.unlinkSync(imagePath);
