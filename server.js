@@ -22,6 +22,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { User } from './models/User.js';
 import { PortOneClient } from '@portone/server-sdk';
 import { authMiddleware } from './middlewares/auth.js';
+import { MongoClient, ServerApiVersion } from 'mongodb';
 
 // 💡 ES Module 환경 설정 (__dirname 선언)
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +58,36 @@ const portoneClient = new PortOneClient({
 const KAKAO_REST_API_KEY=process.env.VITE_KAKAO_REST_API_KEY;
 const REDIRECT_URI=process.env.VITE_KAKAO_REDIRECT_URI;
 const CLIENT_SECRET=process.env.VITE_KAKAO_CLIENT_SECRET; 
+
+const uri = process.env.VITE_MONGODB_URI;
+
+if (!uri) {
+  throw new Error('MONGODB_URI가 .env 파일에 설정되어 있지 않습니다.');
+}
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+async function main() {
+  try {
+    await client.connect();
+    await client.db('admin').command({ ping: 1 });
+    console.log('MongoDB Atlas에 성공적으로 연결되었습니다.');
+    const db = client.db('sample_mflix');
+    const users = db.collection('users');
+    const docs = await users.find({}).limit(5).toArray();
+    console.log(docs);
+  } catch (err) {
+    console.error('연결 실패:', err);
+  } finally {
+    await client.close();
+  }
+}
+main();
+
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
 // getApps() 표준 배열 검증과 cert() 표준 함수를 사용하여 undefined 오류를 무조건 해결합니다.
