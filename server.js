@@ -44,6 +44,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 import axios from 'axios';
+import { userInfo } from 'os';
 // EJS 템플릿 엔진 설정
 app.set('view engine', 'ejs');
 app.set('views', './views'); // views 폴더 안의 템플릿들을 바라봅니다.
@@ -59,8 +60,73 @@ const KAKAO_REST_API_KEY=process.env.VITE_KAKAO_REST_API_KEY;
 const REDIRECT_URI=process.env.VITE_KAKAO_REDIRECT_URI;
 const CLIENT_SECRET=process.env.VITE_KAKAO_CLIENT_SECRET; 
 
-const uri = process.env.VITE_MONGODB_URI;
+app.get('/auth/kakao/callback',
+    async (req, res) => {
+        const {code} = req.query;
 
+
+if (!code) {
+    return
+    res.staus(400),send('Authorization code not found');
+}
+try {
+    //2. 인가코드로 Access Token 요청
+    const tokenResponse = await axios({
+        method : 'POST',
+        url :
+        'https://kauth.kakao.com/oauth/token',
+        headers : {
+              'Content-type':
+              'application/x-www-form-urlencoded;charset=utf-8'
+        },
+        data: new
+        URLSearchParams({
+                grant_type:
+         'authorization_code',
+                  client_id:
+        KAKAO_REST_API_KEY,
+                redirect_url:
+        KAKAO_REDIRECT_URI,
+               code: code,
+        }).toString()
+    });
+    const accessToken = 
+    tokenResponse.data.access_token;
+    //3.Access Token으로 사용자 정보 요청
+    const userResponse = await axios({ 
+                                  method: 'GET',
+                                 url:
+                                 'https://kapi.kakao.com/v2/user/me',
+                                  headers: {
+                                        Authorization:
+                                        'Bearer ${accessToken}',
+                                                'Content-type':
+                                                'application/x-www-form-urlencoded;charset=utf-8'
+                                  }
+                            });
+                                        //카카오 사용자 정보
+                                    const uesrInfo = userResponse.data;
+                                            console.log('카카오 사용자 정보:', uesrInfo);
+
+                                            /*
+                                                4. 이후 비즈니스 로직 수행
+                                                - DB 에서 해당 유저가 있는지 확인
+                                                (userInfo.Id 활용)
+                                                -없으면 회원가입, 있으면 로그인 처리
+                                                - 서비스 자체 JWT 토큰 발행 등 */
+                                        res.json({
+                                            message: '로그인 성공',
+                                            user: userInfo
+                                        });
+                                } catch (error) {
+                                        console.error(error.response? error.response.data :
+                                            error.message);
+                                        res.status(500).send('카카오 로그인 실패');
+                                                 }
+                                });
+
+const uri = process.env.VITE_MONGODB_URI;
+const port = process.env.PORT || 3000;
 if (!uri) {
   throw new Error('MONGODB_URI가 .env 파일에 설정되어 있지 않습니다.');
 }
@@ -71,22 +137,47 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
-async function main() {
-  try {
-    await client.connect();
-    await client.db('admin').command({ ping: 1 });
-    console.log('MongoDB Atlas에 성공적으로 연결되었습니다.');
-    const db = client.db('sample_mflix');
-    const users = db.collection('users');
-    const docs = await users.find({}).limit(5).toArray();
-    console.log(docs);
-  } catch (err) {
-    console.error('연결 실패:', err);
-  } finally {
-    await client.close();
-  }
+async function startServer1() {
+  await client.connect();
+  console.log('MongoDB에 연결되었습니다.');
+  const db = client.db('sample_mflix');
+  const users = db.collection('users');
+  // 클라이언트가 보낸 email, credits, nickname 저장
+  app.post('/users', async (req, res) => {
+    try {
+      const { email, credits, nickname } = req.body;
+      if (!email || credits === undefined || !nickname) {
+        return res.status(400).json({
+          error: 'email, credits, nickname이 모두 필요합니다.',
+        });
+      }
+      const userDoc = {
+        email,
+        credits: Number(credits),
+        nickname,
+        createdAt: new Date(),
+      };
+      const result = await users.insertOne(userDoc);
+      return res.status(201).json({
+        message: '사용자 데이터가 저장되었습니다.',
+        insertedId: result.insertedId,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({
+        error: '서버 오류가 발생했습니다.',
+      });
+    }
+  });
+  app.listen(port, () => {
+    console.log(`서버 실행 중: http://localhost:${port}`);
+  });
 }
-main();
+startServer1().catch((err) => {
+  console.error('서버 시작 실패:', err);
+  process.exit(1);
+});
+
 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
@@ -123,6 +214,20 @@ mongoose.connect(MONGODB_URI)
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100
+});
+
+// 회원의 ID를 받아 credits 정보를 포함한 회원 정보를 반환하는 API
+app.get('/api/user/:id', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        // MongoDB에서 회원 정보 조회
+        const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+        
+        // 회원명과 credits 수를 JSON으로 응답
+        res.json({ name: user.name, credits: user.credits });
+    } catch (error) {
+        res.status(500).send("데이터 조회 실패");
+    }
 });
 
 // =================================================================
