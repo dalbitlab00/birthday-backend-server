@@ -3,14 +3,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
-const router = express.Router();
 import cors from 'cors';
 import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegInstaller from 'ffmpeg-static';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -28,12 +27,13 @@ import { MongoClient, ServerApiVersion } from 'mongodb';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const router = express.Router();
 // FFmpeg 경로 지정
-ffmpeg.setFfmpegPath(ffmpegInstaller);
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 // Express 서버 초기화 (이제 'app' 이라는 이름은 오직 express 서버만 단독으로 사용합니다!)
 const app = express();
-const PORT = process.env.PORT || 10000; 
+const PORT = process.env.PORT || 3000;
 
 // 글로벌 네트워크 미들웨어 세팅
 app.set('trust proxy', 1);
@@ -59,6 +59,57 @@ const portoneClient = new PortOneClient({
 const KAKAO_REST_API_KEY=process.env.VITE_KAKAO_REST_API_KEY;
 const REDIRECT_URI=process.env.VITE_KAKAO_REDIRECT_URI;
 const CLIENT_SECRET=process.env.VITE_KAKAO_CLIENT_SECRET; 
+
+// 1. MongoDB 연결 설정 (접속 URI)
+// 로컬인 경우: 'mongodb://127.0.0.1:27017/데이터베이스이름'
+const mongoURI = process.env.VITE_MONGODB_URI || 'mongodb://127.0.0.1:27017/sample_mflix';
+mongoose.connect(mongoURI)
+  .then(() => console.log('✅ MongoDB 연결 성공!'))
+  .catch(err => console.error('❌ 연결 실패:', err));
+
+  // 트래픽 디펜더 설정
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100
+});
+
+// 2. 스키마(Schema) 정의 (데이터 구조)
+const userSchema = new mongoose.Schema({
+  name: String,
+  age: Number,
+  email: String
+});
+
+ //3. 모델(Model) 생성
+const mongodbUser = mongoose.models.User || mongoose.model('User', userSchema);
+
+// =================================================================
+// 🍃 [MongoDB 연결 설정]
+// =================================================================
+
+// 회원의 ID를 받아 credits 정보를 포함한 회원 정보를 반환하는 API
+app.get('/api/user/:id', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        // .env에서 sample_mflix를 지정했으므로, 해당 DB의 'users' 컬렉션에서 데이터를 찾습니다.
+        const mongodbUser = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+        
+        if (!mongodbUser) {
+            return res.status(404).json({ success: false, error: "유저를 찾을 수 없습니다." });
+        }
+        
+        // ⚠️ 주의: 이미지의 첫 번째 유저 데이터 구조를 보면 name 대신 email, nickname이 들어있습니다.
+        // 데이터 구조에 맞춰 응답값을 조절해 주세요.
+        res.json({ 
+            email: mongodbUser.email, 
+            password: mongodbUser.password,
+            nickname: mongodbUser.nickname, 
+            credits: mongodbUser.credits 
+        });
+    } catch (error) {
+       res.status(500).json({ error: "데이터 조회 실패" });
+    }
+});
 
 app.get('/auth/kakao/callback',
     async (req, res) => {
@@ -124,13 +175,14 @@ try {
                                         res.status(500).send('카카오 로그인 실패');
                                                  }
                                 });
+//const mongoURI = 'mongodb://127.0.0.1:27017/testdb';
+//const mongoURI = process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017/birthday_maker';
 
-const uri = process.env.VITE_MONGODB_URI;
 const port = process.env.PORT || 3000;
-if (!uri) {
+if (!mongoURI) {
   throw new Error('MONGODB_URI가 .env 파일에 설정되어 있지 않습니다.');
 }
-const client = new MongoClient(uri, {
+const client = new MongoClient(mongoURI, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
@@ -169,6 +221,7 @@ async function startServer1() {
       });
     }
   });
+
   app.listen(port, () => {
     console.log(`서버 실행 중: http://localhost:${port}`);
   });
@@ -201,34 +254,6 @@ if (getApps().length === 0) {
     process.exit(1);
   }
 }
-
-// =================================================================
-// 🍃 [MongoDB 연결 설정]
-// =================================================================
-const MONGODB_URI = process.env.VITE_MONGODB_URI || 'mongodb://localhost:27017/birthday_maker';
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log("🍃 MongoDB 연결 성공!"))
-  .catch(err => console.error("❌ MongoDB 연결 실패:", err));
-
-// 트래픽 디펜더 설정
-const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100
-});
-
-// 회원의 ID를 받아 credits 정보를 포함한 회원 정보를 반환하는 API
-app.get('/api/user/:id', async (req, res) => {
-    try {
-        const userId = req.params.id;
-        // MongoDB에서 회원 정보 조회
-        const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
-        
-        // 회원명과 credits 수를 JSON으로 응답
-        res.json({ name: user.name, credits: user.credits });
-    } catch (error) {
-        res.status(500).send("데이터 조회 실패");
-    }
-});
 
 // =================================================================
 // 🏠 [라우터] 사용자가 메인 페이지(/)에 접속했을 때 화면을 그려주는 템플릿 엔진
@@ -330,21 +355,26 @@ const kakaoLogin = async (req, res) => {
 // =================================================================
 app.post('/api/login', authMiddleware, async (req, res) => {
   try {
-    const user = req.user;
-    if (!user) {
+    // 1. 유저 정보를 firebaseUser 변수로 안전하게 받아옴
+    const firebaseUser = req.user; 
+    
+    // 2. 예외 처리 조건문 변수명 변경
+    if (!firebaseUser) {
         return res.status(401).json({
             success: false,
             error: "인증된 유저 정보가 존재하지 않습니다."
         });
     }
+    
+    // 3. 반환 데이터 및 메시지 내의 변수명 변경
     return res.status(200).json({
       success: true,
-      message: `${user.email}님, 환영합니다!`,
+      message: `${firebaseUser.email}님, 환영합니다!`,
       data: {
-        uid: user.firebaseUid,
-        email: user.email,
-        nickname: user.nickname,
-        credits: user.credits 
+        uid: firebaseUser.firebaseUid,
+        email: firebaseUser.email,
+        nickname: firebaseUser.nickname,
+        credits: firebaseUser.credits 
       }
     });
   } catch (error) {
@@ -368,7 +398,7 @@ app.get('/api/user/profile', authMiddleware, (req, res) => {
 // 💳 [API] 포트원 결제 완료 검증 및 크레딧 안전 충전소
 // =================================================================
 app.post('/api/payments/complete', authMiddleware, async (req, res) => {
-  const currentLoggedInUserId = req.user._id; 
+  const currentLoggedInUserId = req.User._id; 
   const { paymentId, amount } = req.body; 
 
   try {
@@ -704,7 +734,7 @@ app.post('/api/generate-video', async (req, res) => {
             .on('end', () => {
                 res.json({
                     success: true,
-                    videoUrl: `https://birthday-backend-server0-1.onrender.com/videos/video_${uniqueId}.mp4`
+                    videoUrl: `https://birthday-backend-server-1.onrender.com/videos/video_${uniqueId}.mp4`
                 });
                 try {
                     fs.unlinkSync(imagePath);
@@ -715,7 +745,11 @@ app.post('/api/generate-video', async (req, res) => {
                 res.status(500).json({ success: false, error: "동영상 변환 실패" });
             });
     } catch (error) {
+      console.error("====== 비디오 변환 실제 에러 발생 ======");
+      console.error(error); // 🔥 이 코드가 들어가야 진짜 원인이 터미널에 찍힙니다!
+       console.error("======================================");
         res.status(500).json({ success: false, error: error.message });
+        
     }
 });
 
