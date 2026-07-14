@@ -61,8 +61,8 @@ const REDIRECT_URI=process.env.VITE_KAKAO_REDIRECT_URI;
 const CLIENT_SECRET=process.env.VITE_KAKAO_CLIENT_SECRET; 
 
 // 1. MongoDB 연결 설정 (접속 URI)
-// 로컬인 경우: 'mongodb://127.0.0.1:27017/데이터베이스이름'
-const mongoURI = process.env.VITE_MONGODB_URI || 'mongodb://127.0.0.1:27017/sample_mflix';
+// 로컬인 경우: 'mongodb://127.0.0.1:27017/sample_mflix'
+const mongoURI = process.env.VITE_MONGODB_URI ;
 mongoose.connect(mongoURI)
   .then(() => console.log('✅ MongoDB 연결 성공!'))
   .catch(err => console.error('❌ 연결 실패:', err));
