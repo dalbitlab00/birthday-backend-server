@@ -496,66 +496,56 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 // ==========================================
 // 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합(굽기) 엔드포인트
 // ==========================================
-app.use('/videos', express.static(path.join(__dirname, 'videos')));
+
 
 app.post('/api/generate-video', async (req, res) => {
   const { audioUrl, jacketImage } = req.body;
-
-  if (!audioUrl || !jacketImage) {
-    return res.status(400).json({ success: false, error: "오디오 주소 또는 자켓 이미지가 누락되었습니다." });
-  }
-
-  // 1. 서버 내부에 임시 작업을 위한 temp 폴더가 없으면 자동으로 생성
-  const tempDir = path.join(__dirname, 'temp');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-
+  
   // 임시 파일 경로 설정
-  const inputImagePath = path.join(tempDir, `input_jacket_${Date.now()}.png`);
-  const outputVideoPath = path.join(tempDir, `output_video_${Date.now()}.mp4`);
+  const inputImagePath = path.join(__dirname, 'temp_jacket.png');
+  const outputVideoPath = path.join(__dirname, 'output.mp4');
 
   try {
-    // 2. Base64 이미지 데이터에서 순수 문자열만 추출하여 물리 파일로 저장 (핵심!)
+    // 🔑 [핵심 고치기] base64 문자열에서 헤더 제거 후 파일로 저장하기
+    // data:image/png;base64, 부분을 잘라냅니다.
     const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-    fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
+    // 버퍼로 변환하여 파일 생성
+    fs.writeFileSync(inputImagePath, base64Data, 'base64');
 
-    // 3. FFmpeg 구동: 정지 이미지 1장과 스트리밍 오디오를 엮어 MP4 동영상 제작
+    // FFmpeg 실행
     ffmpeg()
       .input(inputImagePath)
-      .loop() // 이미지를 오디오 길이에 맞게 반복시킴
+      .loop(5) // 예시: 5초 동영상 제작 (오디오 길이에 맞게 조절 필요)
       .input(audioUrl)
       .outputOptions([
-        '-c:v libx264',      // H.264 비디오 코덱 사용 (유튜브, 모바일 호환성 최고)
-        '-tune stillimage',  // 정지 이미지 합성 최적화 옵션
-        '-c:a aac',          // 오디오 코덱 AAC 지정
-        '-b:a 192k',         // 오디오 음질 지정
-        '-pix_fmt yuv420p',  // 거의 모든 플레이어에서 재생되도록 픽셀 포맷 표준화
-        '-shortest'          // 오디오가 끝나면 비디오도 딱 끝나도록 설정
+        '-c:v libx264',
+        '-tune stillimage',
+        '-c:a aac',
+        '-b:a 192k',
+        '-pix_fmt yuv420p',
+        '-shortest' // 오디오 길이에 맞춤
       ])
       .output(outputVideoPath)
       .on('end', () => {
-        console.log('🎬 MP4 비디오 합성 완벽 성공!');
+        console.log('비디오 제작 완료');
         
-        // 4. 합성이 완료되면 클라이언트에게 파일을 전송하거나 다운로드 링크 리턴
-        // 배포 환경에 따라 res.download를 쓰거나 서버 정적 폴더에 배치하여 URL을 줄 수 있습니다.
-        res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
-          // 전송 완료 후 서버 임시 파일들은 메모리 절약을 위해 깔끔하게 삭제
-          if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-          if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
-        });
+        // 제작 완료 후 파일 전송 등의 로직 처리 후 임시 파일 삭제
+        fs.unlinkSync(inputImagePath);
+        
+        return res.status(200).json({ success: true, message: "제작 완료" });
       })
       .on('error', (err) => {
-        console.error('❌ FFmpeg 합성 오류 발생:', err.message);
+        console.error('FFmpeg 에러:', err);
+        // 실패 시에도 임시 파일 삭제
         if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-        res.status(500).json({ success: false, error: `비디오 인코딩 오류: ${err.message}` });
+        return res.status(500).json({ success: false, error: `비디오 인코딩 오류: ${err.message}` });
       })
       .run();
 
   } catch (error) {
-    console.error('❌ 비디오 처리 예외 발생:', error);
+    console.error(error);
     if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-    res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "서버 처리 실패" });
   }
 });
 
