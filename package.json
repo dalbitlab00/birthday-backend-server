@@ -23,6 +23,8 @@
     "lucide-react": "^1.23.0",
     "mongodb": "^7.5.0",
     "mongoose": "^8.24.1",
+    "passport": "^0.7.0",
+    "passport-facebook": "^3.0.0",
     "path": "^0.12.7"
   }
 }
