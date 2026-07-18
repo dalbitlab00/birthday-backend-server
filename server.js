@@ -12,6 +12,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from 'ffmpeg-static';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import https from 'https'; // 💡 상단에 없으면 추가, 외부 오디오 다운로드용
 
 // 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
@@ -496,69 +497,85 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 // ==========================================
 // 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합(굽기) 엔드포인트
 // ==========================================
-app.use('/videos', express.static(path.join(__dirname, 'videos')));
-
 app.post('/api/generate-video', async (req, res) => {
-    try {
-        const { audioUrl, jacketImage, name } = req.body;
+  const { audioUrl, jacketImage } = req.body;
 
-        const videoDir = path.join(__dirname, 'videos');
-        if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
+  if (!audioUrl || !jacketImage) {
+    return res.status(400).json({ success: false, error: "데이터가 부족합니다." });
+  }
 
-        const uniqueId = Date.now();
-        const imagePath = path.join(videoDir, `temp_${uniqueId}.jpg`);
-        const audioPath = path.join(videoDir, `temp_${uniqueId}.mp3`);
-        const videoPath = path.join(videoDir, `video_${uniqueId}.mp4`);
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
 
-        const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-        fs.writeFileSync(imagePath, base64Data, 'base64');
+  const inputImagePath = path.join(tempDir, `input_${Date.now()}.png`);
+  const inputAudioPath = path.join(tempDir, `input_${Date.now()}.mp3`); // 💡 오디오 임시 저장소 추가
+  const outputVideoPath = path.join(tempDir, `output_${Date.now()}.mp4`);
 
-        const audioResponse = await universalFetch(audioUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': '*/*'
-            }
+  // 1. 외부 서버의 오디오 파일을 내 서버로 안전하게 먼저 다운로드하는 함수
+  const downloadAudio = (url, dest) => {
+    return new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(dest);
+      https.get(url, (response) => {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close(resolve);
         });
-        
-        if (!audioResponse.ok) throw new Error("오디오 다운로드 차단됨");
-        
-        const arrayBuffer = await audioResponse.arrayBuffer();
-        fs.writeFileSync(audioPath, Buffer.from(arrayBuffer));
+      }).on('error', (err) => {
+        fs.unlink(dest, () => {});
+        reject(err);
+      });
+    });
+  };
 
-        ffmpeg()
-            .input(imagePath)
-            .inputOptions(['-loop 1'])
-            .input(audioPath)
-            .outputOptions([
-                '-map 0:v:0',
-                '-map 1:a:0',
-                '-c:v libx264',
-                '-tune stillimage',
-                '-c:a aac',
-                '-b:a 192k',
-                '-pix_fmt yuv420p',
-                '-shortest'
-            ])
-            .save(videoPath)
-            .on('end', () => {
-                res.json({
-                    success: true,
-                    videoUrl: `https://birthday-backend-server-1.onrender.com/videos/video_${uniqueId}.mp4`
-                });
-                try {
-                    fs.unlinkSync(imagePath);
-                    fs.unlinkSync(audioPath);
-                } catch (e) {}
-            })
-            .on('error', (err) => {
-                res.status(500).json({ success: false, error: "동영상 변환 실패" });
-            });
+  try {
+    // 2. 자켓 이미지 디코딩 및 파일 저장
+    const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
+    fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
 
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
+    // 3. ⭐️ 외부 오디오 주소를 로컬 임시 파일로 다운로드 실행
+    await downloadAudio(audioUrl, inputAudioPath);
+
+    // 4. 로컬에 저장된 안전한 파일 2개(이미지, 오디오)로 비디오 합성 실행
+    ffmpeg()
+      .input(inputImagePath)
+      .loop()
+      .input(inputAudioPath) // 💡 로컬 주소로 변경
+      .outputOptions([
+        '-c:v libx264',
+        '-tune stillimage',
+        '-c:a aac',
+        '-b:a 192k',
+        '-pix_fmt yuv420p',
+        '-shortest'
+      ])
+      .output(outputVideoPath)
+      .on('end', () => {
+        console.log('🎬 MP4 비디오 합성 성공!');
+        
+        res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
+          // 가공 완료 후 잔여 파일 청소
+          if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+          if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+          if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
+        });
+      })
+      .on('error', (err) => {
+        console.error('❌ FFmpeg 실패:', err.message);
+        if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+        if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+        res.status(500).json({ success: false, error: "동영상 변환 실패" });
+      })
+      .run();
+
+  } catch (error) {
+    console.error('❌ 예외 처리 진입:', error);
+    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+    if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+    res.status(500).json({ success: false, error: "동영상 변환 실패" });
+  }
 });
-
 
 // ==========================================
 // 🚀 [Vite SSR 통합 및 서버 최종 스타트]
