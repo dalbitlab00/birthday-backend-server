@@ -108,8 +108,8 @@ app.get('/', (req, res) => {
 // =================================================================
 app.post('/api/login', authMiddleware, async (req, res) => {
   try {
-    const user = req.user;
-    if (!user) {
+    const user = req.users;
+    if (!users) {
         return res.status(401).json({
             success: false,
             error: "인증된 유저 정보가 존재하지 않습니다."
@@ -208,7 +208,7 @@ app.get('/api/user/email/:email', async (req, res) => {
 
     if (user) {
       // MongoDB에 유저가 존재하면 데이터 반환
-      return res.json({ success: true, user });
+      return res.json({ success: true, users });
     } else {
       // 유저가 존재하지 않으면 404 전송
       return res.status(404).json({ success: false, message: "MongoDB에 등록되지 않은 유저입니다." });
@@ -224,7 +224,7 @@ app.get('/api/user/email/:email', async (req, res) => {
 app.get('/api/user/profile', authMiddleware, (req, res) => {
   return res.status(200).json({
     success: true,
-    credits: req.user.credits
+    credits: req.users.credits
   });
 });
 
