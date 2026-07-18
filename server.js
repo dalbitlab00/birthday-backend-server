@@ -1,4 +1,4 @@
-// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
+ngo// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
 import dotenv from 'dotenv';
 dotenv.config();
 import { Buffer } from 'buffer'; // 상단에 없으면 추가, 있으면 패스
@@ -26,6 +26,7 @@ import { authMiddleware } from './middlewares/auth.js';
 // 💡 ES Module 환경 설정 (__dirname 선언)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // FFmpeg 경로 지정
 ffmpeg.setFfmpegPath(ffmpegInstaller);
@@ -496,58 +497,69 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 // ==========================================
 // 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합(굽기) 엔드포인트
 // ==========================================
-
+app.use('/videos', express.static(path.join(__dirname, 'videos')));
 
 app.post('/api/generate-video', async (req, res) => {
-  const { audioUrl, jacketImage } = req.body;
-  
-  // 임시 파일 경로 설정
-  const inputImagePath = path.join(__dirname, 'temp_jacket.png');
-  const outputVideoPath = path.join(__dirname, 'output.mp4');
+    try {
+        const { audioUrl, jacketImage, name } = req.body;
 
-  try {
-    // 🔑 [핵심 고치기] base64 문자열에서 헤더 제거 후 파일로 저장하기
-    // data:image/png;base64, 부분을 잘라냅니다.
-    const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-    // 버퍼로 변환하여 파일 생성
-    fs.writeFileSync(inputImagePath, base64Data, 'base64');
+        const videoDir = path.join(__dirname, 'videos');
+        if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
 
-    // FFmpeg 실행
-    ffmpeg()
-      .input(inputImagePath)
-      .loop(5) // 예시: 5초 동영상 제작 (오디오 길이에 맞게 조절 필요)
-      .input(audioUrl)
-      .outputOptions([
-        '-c:v libx264',
-        '-tune stillimage',
-        '-c:a aac',
-        '-b:a 192k',
-        '-pix_fmt yuv420p',
-        '-shortest' // 오디오 길이에 맞춤
-      ])
-      .output(outputVideoPath)
-      .on('end', () => {
-        console.log('비디오 제작 완료');
+        const uniqueId = Date.now();
+        const imagePath = path.join(videoDir, `temp_${uniqueId}.jpg`);
+        const audioPath = path.join(videoDir, `temp_${uniqueId}.mp3`);
+        const videoPath = path.join(videoDir, `video_${uniqueId}.mp4`);
+
+        const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
+        fs.writeFileSync(imagePath, base64Data, 'base64');
+
+        const audioResponse = await universalFetch(audioUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*'
+            }
+        });
         
-        // 제작 완료 후 파일 전송 등의 로직 처리 후 임시 파일 삭제
-        fs.unlinkSync(inputImagePath);
+        if (!audioResponse.ok) throw new Error("오디오 다운로드 차단됨");
         
-        return res.status(200).json({ success: true, message: "제작 완료" });
-      })
-      .on('error', (err) => {
-        console.error('FFmpeg 에러:', err);
-        // 실패 시에도 임시 파일 삭제
-        if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-        return res.status(500).json({ success: false, error: `비디오 인코딩 오류: ${err.message}` });
-      })
-      .run();
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        fs.writeFileSync(audioPath, Buffer.from(arrayBuffer));
 
-  } catch (error) {
-    console.error(error);
-    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-    return res.status(500).json({ success: false, error: "서버 처리 실패" });
-  }
+        ffmpeg()
+            .input(imagePath)
+            .inputOptions(['-loop 1'])
+            .input(audioPath)
+            .outputOptions([
+                '-map 0:v:0',
+                '-map 1:a:0',
+                '-c:v libx264',
+                '-tune stillimage',
+                '-c:a aac',
+                '-b:a 192k',
+                '-pix_fmt yuv420p',
+                '-shortest'
+            ])
+            .save(videoPath)
+            .on('end', () => {
+                res.json({
+                    success: true,
+                    videoUrl: `https://birthday-backend-server-1.onrender.com/videos/video_${uniqueId}.mp4`
+                });
+                try {
+                    fs.unlinkSync(imagePath);
+                    fs.unlinkSync(audioPath);
+                } catch (e) {}
+            })
+            .on('error', (err) => {
+                res.status(500).json({ success: false, error: "동영상 변환 실패" });
+            });
+
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
+
 
 // ==========================================
 // 🚀 [Vite SSR 통합 및 서버 최종 스타트]
