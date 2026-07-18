@@ -548,6 +548,7 @@ app.post('/api/generate-video', async (req, res) => {
         '-c:a aac',
         '-b:a 192k',
         '-pix_fmt yuv420p',
+        '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
         '-shortest'
       ])
       .output(outputVideoPath)
