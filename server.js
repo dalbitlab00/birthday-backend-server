@@ -77,8 +77,8 @@ if (getApps().length === 0) {
 // 🍃 [MongoDB 연결 설정]
 // =================================================================
 const MONGODB_URI = process.env.VITE_MONGODB_URI ;
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log("🍃 MongoDB 연결 성공!"))
+mongoose.connect(MONGODB_URI,{dbName: 'sample_mflix'})
+  .then(() => console.log("🍃 MongoDB 'sample_mflix' 데이터베이스 연결 성공!"))
   .catch(err => console.error("❌ MongoDB 연결 실패:", err));
 
 // 트래픽 디펜더 설정
