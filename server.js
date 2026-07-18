@@ -1,7 +1,7 @@
 // 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
 import dotenv from 'dotenv';
 dotenv.config();
-
+import { Buffer } from 'buffer'; // 상단에 없으면 추가, 있으면 패스
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
@@ -499,61 +499,64 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 app.use('/videos', express.static(path.join(__dirname, 'videos')));
 
 app.post('/api/generate-video', async (req, res) => {
-    try {
-        const { audioUrl, jacketImage } = req.body;
-        const videoDir = path.join(__dirname, 'videos');
-        if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
+  const { audioUrl, jacketImage } = req.body;
 
-        const uniqueId = Date.now();
-        const imagePath = path.join(videoDir, `temp_${uniqueId}.jpg`);
-        const audioPath = path.join(videoDir, `temp_${uniqueId}.mp3`);
-        const videoPath = path.join(videoDir, `video_${uniqueId}.mp4`);
+  if (!audioUrl || !jacketImage) {
+    return res.status(400).json({ success: false, error: "오디오 주소 또는 자켓 이미지가 누락되었습니다." });
+  }
 
-        const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-        fs.writeFileSync(imagePath, base64Data, 'base64');
+  // 1. 서버 내부에 임시 작업을 위한 temp 폴더가 없으면 자동으로 생성
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
 
-        const audioResponse = await universalFetch(audioUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': '*/*'
-            }
+  // 임시 파일 경로 설정
+  const inputImagePath = path.join(tempDir, `input_jacket_${Date.now()}.png`);
+  const outputVideoPath = path.join(tempDir, `output_video_${Date.now()}.mp4`);
+
+  try {
+    // 2. Base64 이미지 데이터에서 순수 문자열만 추출하여 물리 파일로 저장 (핵심!)
+    const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
+    fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
+
+    // 3. FFmpeg 구동: 정지 이미지 1장과 스트리밍 오디오를 엮어 MP4 동영상 제작
+    ffmpeg()
+      .input(inputImagePath)
+      .loop() // 이미지를 오디오 길이에 맞게 반복시킴
+      .input(audioUrl)
+      .outputOptions([
+        '-c:v libx264',      // H.264 비디오 코덱 사용 (유튜브, 모바일 호환성 최고)
+        '-tune stillimage',  // 정지 이미지 합성 최적화 옵션
+        '-c:a aac',          // 오디오 코덱 AAC 지정
+        '-b:a 192k',         // 오디오 음질 지정
+        '-pix_fmt yuv420p',  // 거의 모든 플레이어에서 재생되도록 픽셀 포맷 표준화
+        '-shortest'          // 오디오가 끝나면 비디오도 딱 끝나도록 설정
+      ])
+      .output(outputVideoPath)
+      .on('end', () => {
+        console.log('🎬 MP4 비디오 합성 완벽 성공!');
+        
+        // 4. 합성이 완료되면 클라이언트에게 파일을 전송하거나 다운로드 링크 리턴
+        // 배포 환경에 따라 res.download를 쓰거나 서버 정적 폴더에 배치하여 URL을 줄 수 있습니다.
+        res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
+          // 전송 완료 후 서버 임시 파일들은 메모리 절약을 위해 깔끔하게 삭제
+          if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+          if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
         });
-        if (!audioResponse.ok) throw new Error("오디오 다운로드 차단됨");
+      })
+      .on('error', (err) => {
+        console.error('❌ FFmpeg 합성 오류 발생:', err.message);
+        if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+        res.status(500).json({ success: false, error: `비디오 인코딩 오류: ${err.message}` });
+      })
+      .run();
 
-        const arrayBuffer = await audioResponse.arrayBuffer();
-        fs.writeFileSync(audioPath, Buffer.from(arrayBuffer));
-
-        ffmpeg()
-            .input(imagePath)
-            .inputOptions(['-loop 1'])
-            .input(audioPath)
-            .outputOptions([
-                '-map 0:v:0',
-                '-map 1:a:0',
-                '-c:v libx264',
-                '-tune stillimage',
-                '-c:a aac',
-                '-b:a 192k',
-                '-pix_fmt yuv420p',
-                '-shortest'
-            ])
-            .save(videoPath)
-            .on('end', () => {
-                res.json({
-                    success: true,
-                    videoUrl: `https://birthday-backend-server-1.onrender.com/videos/video_${uniqueId}.mp4`
-                });
-                try {
-                    fs.unlinkSync(imagePath);
-                    fs.unlinkSync(audioPath);
-                } catch (e) { }
-            })
-            .on('error', (err) => {
-                res.status(500).json({ success: false, error: "동영상 변환 실패" });
-            });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
+  } catch (error) {
+    console.error('❌ 비디오 처리 예외 발생:', error);
+    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // ==========================================
