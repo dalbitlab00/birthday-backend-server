@@ -1,4 +1,3 @@
-ngo// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
 import dotenv from 'dotenv';
 dotenv.config();
 import { Buffer } from 'buffer'; // 상단에 없으면 추가, 있으면 패스
