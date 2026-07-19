@@ -37,9 +37,9 @@ export const authMiddleware = async (req, res, next) => {
         user = await User.create({
           firebaseUid: decodedToken.uid,
           email: decodedToken.email || `kakao-user-${decodedToken.uid.slice(0, 8)}@petmaker.com`,
-          credits: 5
+          credits: 2
         });
-        console.log(`🎉 신규 보호자님 자동 등록 성공: ${user.email} (5 P 지급)`);
+        console.log(`🎉 신규 보호자님 자동 등록 성공: ${user.email} (2 P 지급)`);
       }
     }
 

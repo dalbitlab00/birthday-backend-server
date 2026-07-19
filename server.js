@@ -134,7 +134,37 @@ app.post('/api/login', authMiddleware, async (req, res) => {
     });
   }
 });
+// 💡 이메일 찾기 API 엔드포인트
+app.post('/api/find-email', async (req, res) => {
+  const { petName, phoneNumber } = req.body; // 가입 시 수집한 정보 기준 (예시: 휴대폰 번호 등)
 
+  if (!phoneNumber) {
+    return res.status(400).json({ success: false, error: "전화번호를 입력해 주세요." });
+  }
+
+  try {
+    // MongoDB 'sample_mflix' 내 users 컬렉션에서 해당 전화번호를 가진 유저 검색
+    const userDoc = await User.findOne({ phoneNumber: phoneNumber });
+    
+    if (!userDoc) {
+      return res.status(404).json({ success: false, error: "일치하는 회원 정보가 없습니다." });
+    }
+
+    // 🔒 보안을 위해 이메일 뒷자리를 가려서 돌려주는 매직 (마스킹 처리)
+    const email = userDoc.email;
+    const [localPart, domain] = email.split('@');
+    const maskedLocal = localPart.substring(0, 3) + '*'.repeat(Math.max(0, localPart.length - 3));
+    const maskedEmail = `${maskedLocal}@${domain}`;
+
+    res.json({ 
+      success: true, 
+      maskedEmail: maskedEmail // 가려진 이메일 리턴
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 // ==========================================
 // 🍑 [API] 카카오 로그인 및 커스텀 토큰 발급소
 // ==========================================
