@@ -165,49 +165,7 @@ app.post('/api/find-email', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-// ==========================================
-// 🍑 [API] 카카오 로그인 및 커스텀 토큰 발급소
-// ==========================================
-app.post('/api/auth/kakao', async (req, res) => {
-  const { code } = req.body; // 프론트엔드가 보내준 인증 코드
-
-  if (!code) {
-    return res.status(400).json({ success: false, error: "인증 코드가 없습니다." });
-  }
-
-  try {
-    // 1. 인가 코드를 카카오 토큰으로 교환
-    const tokenResponse = await axios.post(
-      'https://kauth.kakao.com/oauth/token',
-      null,
-      {
-        params: {
-          grant_type: 'authorization_code',
-          client_id: process.env.VITE_KAKAO_REST_API_KEY,
-          redirect_uri: process.env.VITE_KAKAO_REDIRECT_URI,
-          code: code,
-        },
-        headers: {
-          'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-        }
-      }
-    );
-
-    const { access_token } = tokenResponse.data;
-
-    // 2. 액세스 토큰으로 카카오 사용자 정보 가져오기
-    const userResponse = await axios.get('https://kapi.kakao.com/v2/user/me', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-      }
-    });
-
-    const kakaoUser = userResponse.data;
-    const kakaoUid = `kakao:${kakaoUser.id}`; // 파이어베이스용 고유 UID 조각
-    const email = kakaoUser.kakao_account?.email || `${kakaoUser.id}@kakao.com`;
-    const nickname = kakaoUser.properties?.nickname || "카카오 보호자";
-
+z
 // 💡 [참고] 기존에 유실되었던 파이어베이스 커스텀 토큰 발급 및 MongoDB 유저 연동 로직이 
     // 원래 여기에 있어야 합니다. 임시로 성공 응답 형태만 유지해 둡니다.
     return res.status(200).json({
@@ -259,46 +217,6 @@ app.get('/api/user/profile', authMiddleware, (req, res) => {
   });
 });
 
-// =================================================================
-// 💳 [API] 포트원 결제 완료 검증 및 크레딧 안전 충전소
-// =================================================================
-app.post('/api/payments/complete', authMiddleware, async (req, res) => {
-  const currentLoggedInUserId = req.user._id; 
-  const { paymentId, amount } = req.body; 
-
-  try {
-    const paymentData = await portoneClient.payment.getPayment({ paymentId });
-
-    if (paymentData.status === "PAID" && paymentData.amount.total === amount) {
-      const creditsToCharge = amount / 1000; 
-
-      const updatedUser = await User.findByIdAndUpdate(
-        currentLoggedInUserId,
-        { $inc: { credits: creditsToCharge } },
-        { new: true } 
-      );
-
-      console.log(`💰 결제 성공 및 크레딧 지급 완료: ${updatedUser.email} (+${creditsToCharge} Credits)`);
-
-      return res.status(200).json({ 
-        success: true, 
-        message: `${creditsToCharge} 크레딧이 안전하게 충전되었습니다.`,
-        currentCredits: updatedUser.credits
-      });
-    } else {
-      return res.status(400).json({ 
-        success: false, 
-        message: "비정상적이거나 위변조된 결제 시도입니다." 
-      });
-    }
-  } catch (error) {
-    console.error("❌ 결제 검증 중 서버 오류 발생:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: "결제를 처리하는 중 서버 오류가 발생했습니다." 
-    });
-  }
-});
 
 // =================================================================
 // 🤖 [API] Gemini 한글 가사 자동 생성소 (gemini-2.5-flash-lite)
