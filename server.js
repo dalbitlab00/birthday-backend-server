@@ -165,21 +165,8 @@ app.post('/api/find-email', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-z
-// 💡 [참고] 기존에 유실되었던 파이어베이스 커스텀 토큰 발급 및 MongoDB 유저 연동 로직이 
-    // 원래 여기에 있어야 합니다. 임시로 성공 응답 형태만 유지해 둡니다.
-    return res.status(200).json({
-      success: true,
-      user: {
-        email,
-        nickname
-      }
-    });
-} catch (error) {
-    console.error("❌ 카카오 인증 처리 실패:", error.response?.data || error.message);
-    return res.status(500).json({ success: false, error: "카카오 인증 처리 중 에러가 발생했습니다." });
-  }
-});
+
+
 
 // ==========================================
 // 🔍 [API] 이메일을 기준으로 MongoDB에서 유저를 조회하는 코드
