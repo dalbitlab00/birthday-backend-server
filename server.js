@@ -589,7 +589,7 @@ app.post('/api/generate-video', async (req, res) => {
         '-b:a 192k',
         '-pix_fmt yuv420p',
         // 짝수 해상도 보장 및 스케일 조정
-        '-vf scale=pad=ceil(iw/2)*2:ceil(ih/2)*2',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
         '-shortest'
       ])
       .output(outputVideoPath)
