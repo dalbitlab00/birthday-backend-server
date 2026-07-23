@@ -10,7 +10,7 @@ import fs from 'fs';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegInstaller from 'ffmpeg-static';
+import ffmpegPath from 'ffmpeg-static';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -28,7 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // FFmpeg 경로 지정
-ffmpeg.setFfmpegPath(ffmpegInstaller);
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Express 서버 초기화
 const app = express();
@@ -532,85 +532,95 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 // 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합(굽기) 엔드포인트
 // ==========================================
 app.post('/api/generate-video', async (req, res) => {
-   const { audioUrl, jacketImage } = req.body;
-   
-     if (!audioUrl || !jacketImage) {
-       return res.status(400).json({ success: false, error: "데이터가 부족합니다." });
-     }
-   
-     const tempDir = path.join(__dirname, 'temp');
-     if (!fs.existsSync(tempDir)) {
-       fs.mkdirSync(tempDir, { recursive: true });
-     }
-      
-        const inputImagePath = path.join(tempDir, `input_${Date.now()}.png`);
-          const inputAudioPath = path.join(tempDir, `input_${Date.now()}.mp3`); // 💡 오디오 임시 저장소 추가
-          const outputVideoPath = path.join(tempDir, `output_${Date.now()}.mp4`);
-        
-        // 1. 외부 서버의 오디오 파일을 내 서버로 안전하게 먼저 다운로드하는 함수
-         const downloadAudio = (url, dest) => {
-           return new Promise((resolve, reject) => {
-             const file = fs.createWriteStream(dest);
-             https.get(url, (response) => {
-               response.pipe(file);
-               file.on('finish', () => {
-                 file.close(resolve);
-               });
-             }).on('error', (err) => {
-               fs.unlink(dest, () => {});
-               reject(err);
-             });
-           });
-         };
+  const { audioUrl, jacketImage } = req.body;
 
-         try {
-            // 2. 자켓 이미지 디코딩 및 파일 저장
-            const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-            fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
-        
-            // 3. ⭐️ 외부 오디오 주소를 로컬 임시 파일로 다운로드 실행
-            await downloadAudio(audioUrl, inputAudioPath);
+  if (!audioUrl || !jacketImage) {
+    return res.status(400).json({ success: false, error: "데이터가 부족합니다." });
+  }
 
-         ffmpeg()
-              .input(inputImagePath)
-              .loop()
-              .input(inputAudioPath) // 💡 로컬 주소로 변경
-              .outputOptions([
-                '-c:v libx264',
-                '-tune stillimage',
-                '-c:a aac',
-                '-b:a 192k',
-                '-pix_fmt yuv420p',
-                '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                '-shortest'
-            ])
-            .output(outputVideoPath)
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+
+  const timeStamp = Date.now();
+  const inputImagePath = path.join(tempDir, `input_${timeStamp}.png`);
+  const inputAudioPath = path.join(tempDir, `input_${timeStamp}.mp3`);
+  const outputVideoPath = path.join(tempDir, `output_${timeStamp}.mp4`);
+
+  // 임시 파일 일괄 정리 함수
+  const cleanupFiles = () => {
+    [inputImagePath, inputAudioPath, outputVideoPath].forEach((filePath) => {
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (e) {}
+      }
+    });
+  };
+
+  try {
+    // 1. 자켓 이미지 디코딩 및 저장
+    const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
+    fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
+
+    // 2. 외부 오디오 다운로드 (axios 스트림 사용으로 302 리다이렉트/HTTP 응답 안전 처리)
+    const response = await axios({
+      method: 'get',
+      url: audioUrl,
+      responseType: 'stream'
+    });
+
+    const writer = fs.createWriteStream(inputAudioPath);
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+
+    // 3. FFmpeg 비디오 합성
+    ffmpeg()
+      .input(inputImagePath)
+      .loop()
+      .input(inputAudioPath)
+      .outputOptions([
+        '-c:v libx264',
+        '-tune stillimage',
+        '-c:a aac',
+        '-b:a 192k',
+        '-pix_fmt yuv420p',
+        // 짝수 해상도 보장 및 스케일 조정
+        '-vf scale=pad=ceil(iw/2)*2:ceil(ih/2)*2',
+        '-shortest'
+      ])
+      .output(outputVideoPath)
+      .on('start', (commandLine) => {
+        console.log('🎬 FFmpeg 명령어 실행:', commandLine);
+      })
       .on('end', () => {
         console.log('🎬 MP4 비디오 합성 성공!');
 
-                    res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
-                              // 가공 완료 후 잔여 파일 청소
-                              if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-                              if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
-                              if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
-                            });
-                          })
+        res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
+          if (err) console.error('파일 다운로드 응답 중 오류:', err);
+          cleanupFiles(); // 전송 완료 후 정리
+        });
+      })
+      .on('error', (err) => {
+        console.error('❌ FFmpeg 실패 상세:', err);
+        cleanupFiles();
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, error: `동영상 변환 실패: ${err.message}` });
+        }
+      })
+      .run();
 
-            .on('error', (err) => {
-                    console.error('❌ FFmpeg 실패:', err.message);
-                    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-                    if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
-                    res.status(500).json({ success: false, error: "동영상 변환 실패" });
-                  })
-                  .run();
-            
-     } catch (error) {
-        console.error('❌ 예외 처리 진입:', error);
-        if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-        if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
-        res.status(500).json({ success: false, error: "동영상 변환 실패" });
-      }
-    });
+  } catch (error) {
+    console.error('❌ 예외 처리 진입:', error);
+    cleanupFiles();
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: `서버 예외 발생: ${error.message}` });
+    }
+  }
+});
 
 // ==========================================
 // 🚀 [Vite SSR 통합 및 서버 최종 스타트]
