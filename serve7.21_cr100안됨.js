@@ -1,7 +1,6 @@
-// 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
 import dotenv from 'dotenv';
 dotenv.config();
-
+import { Buffer } from 'buffer';
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
@@ -13,19 +12,24 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from 'ffmpeg-static';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import https from 'https';
 
-// 💡 Firebase Admin SDK 최신 ESM 표준 문법 가져오기
+import admin from 'firebase-admin';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import admin from 'firebase-admin' ;
-// 💡 우리 프로젝트 안의 파일들 가져오기
-import { User } from './models/User.js';
+
+// ⭐️ [해결 1] User 모델은 단 한번만 가져오도록 정리했습니다. (User.js 파일 export 방식에 맞춰 사용)
+import{ User } from './models/User.js'; 
+
 import { PortOneClient } from '@portone/server-sdk';
 import { authMiddleware } from './middlewares/auth.js';
 
-// 💡 ES Module 환경 설정 (__dirname 선언)
+const router = express.Router();
+
+// ES Module 환경 설정 (__dirname 선언)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // FFmpeg 경로 지정
 ffmpeg.setFfmpegPath(ffmpegInstaller);
@@ -42,7 +46,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // EJS 템플릿 엔진 설정
 app.set('view engine', 'ejs');
-app.set('views', './views'); // views 폴더 안의 템플릿들을 바라봅니다.
+app.set('views', './views');
 
 // API 키 및 서비스 연결 설정
 const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY;
@@ -51,9 +55,27 @@ const portoneClient = new PortOneClient({
   secret: process.env.PORTONE_API_SECRET 
 });
 
+app.post('/api/auth/kakao', async (req, res) => {
+  const { code } = req.body;
 
-const router = express.Router();
-
+  try {
+    const response = await axios.post('https://kauth.kakao.com/oauth/token', null, {
+      params: {
+        grant_type: 'authorization_code',
+        client_id: process.env.KAKAO_REST_API_KEY,
+        redirect_uri: process.env.KAKAO_REDIRECT_URI,
+        code: code,
+        client_secret: process.env.KAKAO_CLIENT_SECRET
+      },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8'
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // =================================================================
 // 🔥 [Firebase Admin SDK 단일 안전 초기화]
@@ -80,9 +102,9 @@ if (getApps().length === 0) {
 // =================================================================
 // 🍃 [MongoDB 연결 설정]
 // =================================================================
-const MONGODB_URI = process.env.VITE_MONGODB_URI ;
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log("🍃 MongoDB 연결 성공!"))
+const MONGODB_URI = process.env.VITE_MONGODB_URI;
+mongoose.connect(MONGODB_URI, { dbName: 'sample_mflix' })
+  .then(() => console.log("🍃 MongoDB 'sample_mflix' 데이터베이스 연결 성공!"))
   .catch(err => console.error("❌ MongoDB 연결 실패:", err));
 
 // 트래픽 디펜더 설정
@@ -92,7 +114,7 @@ const apiLimiter = rateLimit({
 });
 
 // =================================================================
-// 🏠 [라우터] 사용자가 메인 페이지(/)에 접속했을 때 화면을 그려주는 템플릿 엔진
+// 🏠 [라우터] 사용자가 메인 페이지(/)에 접속했을 때
 // =================================================================
 app.get('/', (req, res) => {
   const firebaseKeys = {
@@ -106,152 +128,117 @@ app.get('/', (req, res) => {
   res.render('index', { firebaseKeys });
 });
 
-// =================================================================
-// 🔑 [API] 회원가입 및 로그인 처리 문지기
-// =================================================================
-app.post('/api/login', authMiddleware, async (req, res) => {
-  try {
-    const user = req.user;
-    if (!user) {
-        return res.status(401).json({
-            success: false,
-            error: "인증된 유저 정보가 존재하지 않습니다."
-        });
-    }
-    return res.status(200).json({
-      success: true,
-      message: `${user.email}님, 환영합니다!`,
-      data: {
-        uid: user.firebaseUid,
-        email: user.email,
-        nickname: user.nickname,
-        credits: user.credits
-      }
-    });
-  } catch (error) {
-    console.error("🔒 백엔드 로그인 라우터 에러:", error);
-    return res.status(500).json({
-      success: false,
-      error: "서버 내부 인증 처리 실패"
-    });
-  }
-});
-
-app.post('/api/auth/naver', async (req, res) => {
-  const { code, state } = req.body;
+// ⭐️ [해결 2] firebase-login 내부의 user 선언 재정리
+router.post('/api/auth/firebase-login', async (req, res) => {
+  const { idToken } = req.body;
 
   try {
-    // 1. 네이버에 access_token 요청
-    const tokenResponse = await axios.get('https://nid.naver.com/oauth2.0/token', {
-      params: {
-        grant_type: 'authorization_code',
-        client_id: process.env.VITE_NAVER_CLIENT_ID,
-        client_secret: process.env.VITE_NAVER_CLIENT_SECRET,
-        code,
-        state,
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    // decodedToken에서 기본 프로필 정보 추출
+    const { uid, email, nickname , credits , updatedAt } = decodedToken;
+
+    // MongoDB의 users 컬렉션에서 firebaseUid로 기존 유저 검색
+    let existingUser = await User.findOne({ firebaseUid: uid });
+
+    if (existingUser) {
+      console.log('기존 회원 로그인 성공:', existingUser.email || existingUser.name);
+
+      // ⭐️ 핵심: 만약 기존 유저의 credits 값이 없거나 undefined인 경우 0으로 보정
+      const userObj = existingUser.toObject();
+      if (userObj.credits === undefined || userObj.credits === null) {
+        userObj.credits = 0;
       }
-    });
 
-    const accessToken = tokenResponse.data.access_token;
+      return res.status(200).json({
+        isNewUser: false,
+        message: '로그인 성공',
+        user: userObj
+      });
+    } else {
+      console.log('신규 회원 등록 진행 중...');
+      
+      // 소셜 로그인 특성상 email이나 name이 없는 경우 대비 기본값 설정
+      const userEmail = email || `${uid.substring(0, 8)}@kakao.user`;
+      const userName = name || '사용자';
 
-    // 2. access_token으로 네이버 프로필 정보 조회
-    const profileResponse = await axios.get('https://openapi.naver.com/v1/nid/me', {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
+      const newUser = new User({
+        firebaseUid: uid,
+        email: userEmail,
+        name: userName,
+        profileImage: picture || '',
+        credits: 2, // ⭐️ 가입 보상 2포인트 세팅
+        createdAt: new Date()
+      });
 
-    const naverUser = profileResponse.data.response;
-    const uid = `naver:${naverUser.id}`; // Firebase 고유 UID 생성
+      await newUser.save();
 
-    // 3. Firebase Custom Token 생성
-    const firebaseToken = await admin.auth().createCustomToken(uid, {
-      email: naverUser.email,
-      name: naverUser.name || naverUser.nickname,
-      provider: 'naver'
-    });
-
-    // 4. (선택사항) 백엔드 DB에 유저 생성/업데이트 로직 실행
-
-    return res.json({ firebaseToken });
-  } catch (error) {
-    console.error("네이버 인증 에러:", error.response?.data || error.message);
-    return res.status(500).json({ error: '네이버 로그인 처리 중 오류가 발생했습니다.' });
-  }
-});
-
-// ==========================================
-// 🍑 [API] 카카오 로그인 및 커스텀 토큰 발급소
-// ==========================================
-app.post('/api/auth/kakao', async (req, res) => {
-  const { code } = req.body; // 프론트엔드가 보내준 인증 코드
-
-  if (!code) {
-    return res.status(400).json({ success: false, error: "인증 코드가 없습니다." });
-  }
-
-  try {
-    // 1. 인가 코드를 카카오 토큰으로 교환
-    const tokenResponse = await axios.post(
-      'https://kauth.kakao.com/oauth/token',
-      null,
-      {
-        params: {
-          grant_type: 'authorization_code',
-          client_id: process.env.KAKAO_REST_API_KEY,
-          redirect_uri: process.env.KAKAO_REDIRECT_URI,
-          code: code,
-        },
-        headers: {
-          'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-        }
-      }
-    );
-
-    const { access_token } = tokenResponse.data;
-
-    // 2. 액세스 토큰으로 카카오 사용자 정보 가져오기
-    const userResponse = await axios.get('https://kapi.kakao.com/v2/user/me', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        'Content-type': 'application/x-www-form-urlencoded;charset=utf-8'
-      }
-    });
-
-    const kakaoUser = userResponse.data;
-    const kakaoUid = `kakao:${kakaoUser.id}`; // 파이어베이스용 고유 UID 조각
-    const email = kakaoUser.kakao_account?.email || `${kakaoUser.id}@kakao.com`;
-    const nickname = kakaoUser.properties?.nickname || "카카오 보호자";
-
-    // 3. Firebase Admin SDK를 이용해 이 사용자를 위한 커스텀 토큰 생성
-    const customToken = await getAuth().createCustomToken(kakaoUid, {
-      email: email,
-      nickname: nickname
-    });
-
-    // 4. 먼저 MongoDB에 유저 데이터가 있는지 검사하고 없으면 생성
-    let dbUser = await User.findOne({ firebaseUid: kakaoUid });
-    if (!dbUser) {
-      dbUser = await User.create({
-        firebaseUid: kakaoUid,
-        email: email,
-        nickname: nickname,
-        credits: 5 // 신규 가입 웰컴 크레딧
+      return res.status(201).json({
+        isNewUser: true,
+        message: '회원가입 성공',
+        user: newUser
       });
     }
 
-    // 5. 프론트엔드로 커스텀 토큰 안전 배달
-    return res.status(200).json({
-      success: true,
-      customToken,
-      user: {
-        email,
-        nickname,
-        credits: dbUser.credits
-      }
+  } catch (error) {
+    console.error('인증 및 DB 비교 오류:', error);
+    return res.status(401).json({ error: '유효하지 않은 토큰이거나 인증 실패했습니다.' });
+  }
+});
+
+app.use('/', router);
+
+// 💡 이메일 찾기 API 엔드포인트
+app.post('/api/find-email', async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({ success: false, error: "전화번호를 입력해 주세요." });
+  }
+
+  try {
+    const userDoc = await User.findOne({ phoneNumber: phoneNumber });
+    
+    if (!userDoc) {
+      return res.status(404).json({ success: false, error: "일치하는 회원 정보가 없습니다." });
+    }
+
+    const email = userDoc.email;
+    const [localPart, domain] = email.split('@');
+    const maskedLocal = localPart.substring(0, 3) + '*'.repeat(Math.max(0, localPart.length - 3));
+    const maskedEmail = `${maskedLocal}@${domain}`;
+
+    res.json({ 
+      success: true, 
+      maskedEmail: maskedEmail 
     });
 
   } catch (error) {
-    console.error("❌ 카카오 인증 처리 실패:", error.response?.data || error.message);
-    return res.status(500).json({ success: false, error: "카카오 인증 처리 중 에러가 발생했습니다." });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 🔍 [API] 이메일을 기준으로 MongoDB 유저 조회
+// ==========================================
+app.get('/api/user/email/:email', async (req, res) => {
+  try {
+    const userEmail = req.params.email;
+
+    if (!userEmail) {
+      return res.status(400).json({ success: false, message: "이메일 파라미터가 누락되었습니다." });
+    }
+
+    const foundUser = await User.findOne({ email: userEmail.trim() });
+
+    if (foundUser) {
+      // ⭐️ [해결 3] users -> foundUser 변수명 일치
+      return res.json({ success: true, user: foundUser });
+    } else {
+      return res.status(404).json({ success: false, message: "MongoDB에 등록되지 않은 유저입니다." });
+    }
+  } catch (error) {
+    console.error("❌ MongoDB 유저 조회 오류:", error);
+    return res.status(500).json({ success: false, message: "서버 내부 오류 발생" });
   }
 });
 
@@ -259,49 +246,9 @@ app.post('/api/auth/kakao', async (req, res) => {
 app.get('/api/user/profile', authMiddleware, (req, res) => {
   return res.status(200).json({
     success: true,
-    credits: req.user.credits
+    // ⭐️ [해결 4] req.users -> req.user 변수 오타 수정
+    credits: req.users ? req.users.credits : 0 
   });
-});
-
-// =================================================================
-// 💳 [API] 포트원 결제 완료 검증 및 크레딧 안전 충전소
-// =================================================================
-app.post('/api/payments/complete', authMiddleware, async (req, res) => {
-  const currentLoggedInUserId = req.user._id; 
-  const { paymentId, amount } = req.body; 
-
-  try {
-    const paymentData = await portoneClient.payment.getPayment({ paymentId });
-
-    if (paymentData.status === "PAID" && paymentData.amount.total === amount) {
-      const creditsToCharge = amount / 1000; 
-
-      const updatedUser = await User.findByIdAndUpdate(
-        currentLoggedInUserId,
-        { $inc: { credits: creditsToCharge } },
-        { new: true } 
-      );
-
-      console.log(`💰 결제 성공 및 크레딧 지급 완료: ${updatedUser.email} (+${creditsToCharge} Credits)`);
-
-      return res.status(200).json({ 
-        success: true, 
-        message: `${creditsToCharge} 크레딧이 안전하게 충전되었습니다.`,
-        currentCredits: updatedUser.credits
-      });
-    } else {
-      return res.status(400).json({ 
-        success: false, 
-        message: "비정상적이거나 위변조된 결제 시도입니다." 
-      });
-    }
-  } catch (error) {
-    console.error("❌ 결제 검증 중 서버 오류 발생:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: "결제를 처리하는 중 서버 오류가 발생했습니다." 
-    });
-  }
 });
 
 // =================================================================
@@ -415,7 +362,7 @@ app.post('/api/generate-song', async (req, res) => {
             title: title || 'My Pet Birthday Song',
             instrumental: false,
             model: 'V4_5ALL',
-            callBackUrl: 'https://birthday-backend-1.server.onrender.com/api/suno-callback'
+            callBackUrl: 'https://birthday-backend-server-1.onrender.com/api/suno-callback'
         };
 
         const response = await universalFetch('https://api.sunoapi.org/api/v1/generate', {
@@ -529,91 +476,86 @@ app.get('/api/song-status/:taskId', async (req, res) => {
 });
 
 // ==========================================
-// 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합(굽기) 엔드포인트
+// 🎬 [API] 앨범 재킷 이미지 + MP3 비디오 병합 엔드포인트
 // ==========================================
 app.post('/api/generate-video', async (req, res) => {
-   const { audioUrl, jacketImage } = req.body;
-   
-     if (!audioUrl || !jacketImage) {
-       return res.status(400).json({ success: false, error: "데이터가 부족합니다." });
-     }
-   
-     const tempDir = path.join(__dirname, 'temp');
-     if (!fs.existsSync(tempDir)) {
-       fs.mkdirSync(tempDir, { recursive: true });
-     }
-      
-        const inputImagePath = path.join(tempDir, `input_${Date.now()}.png`);
-          const inputAudioPath = path.join(tempDir, `input_${Date.now()}.mp3`); // 💡 오디오 임시 저장소 추가
-          const outputVideoPath = path.join(tempDir, `output_${Date.now()}.mp4`);
-        
-        // 1. 외부 서버의 오디오 파일을 내 서버로 안전하게 먼저 다운로드하는 함수
-         const downloadAudio = (url, dest) => {
-           return new Promise((resolve, reject) => {
-             const file = fs.createWriteStream(dest);
-             https.get(url, (response) => {
-               response.pipe(file);
-               file.on('finish', () => {
-                 file.close(resolve);
-               });
-             }).on('error', (err) => {
-               fs.unlink(dest, () => {});
-               reject(err);
-             });
-           });
-         };
+  const { audioUrl, jacketImage } = req.body;
 
-         try {
-            // 2. 자켓 이미지 디코딩 및 파일 저장
-            const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
-            fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
-        
-            // 3. ⭐️ 외부 오디오 주소를 로컬 임시 파일로 다운로드 실행
-            await downloadAudio(audioUrl, inputAudioPath);
+  if (!audioUrl || !jacketImage) {
+    return res.status(400).json({ success: false, error: "데이터가 부족합니다." });
+  }
 
-         ffmpeg()
-              .input(inputImagePath)
-              .loop()
-              .input(inputAudioPath) // 💡 로컬 주소로 변경
-              .outputOptions([
-                '-c:v libx264',
-                '-tune stillimage',
-                '-c:a aac',
-                '-b:a 192k',
-                '-pix_fmt yuv420p',
-                '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                '-shortest'
-            ])
-            .output(outputVideoPath)
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+
+  const inputImagePath = path.join(tempDir, `input_${Date.now()}.png`);
+  const inputAudioPath = path.join(tempDir, `input_${Date.now()}.mp3`);
+  const outputVideoPath = path.join(tempDir, `output_${Date.now()}.mp4`);
+
+  const downloadAudio = (url, dest) => {
+    return new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(dest);
+      https.get(url, (response) => {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close(resolve);
+        });
+      }).on('error', (err) => {
+        fs.unlink(dest, () => {});
+        reject(err);
+      });
+    });
+  };
+
+  try {
+    const base64Data = jacketImage.replace(/^data:image\/\w+;base64,/, "");
+    fs.writeFileSync(inputImagePath, Buffer.from(base64Data, 'base64'));
+
+    await downloadAudio(audioUrl, inputAudioPath);
+
+    ffmpeg()
+      .input(inputImagePath)
+      .loop()
+      .input(inputAudioPath)
+      .outputOptions([
+        '-c:v libx264',
+        '-tune stillimage',
+        '-c:a aac',
+        '-b:a 192k',
+        '-pix_fmt yuv420p',
+        '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-shortest'
+      ])
+      .output(outputVideoPath)
       .on('end', () => {
         console.log('🎬 MP4 비디오 합성 성공!');
-
-                    res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
-                              // 가공 완료 후 잔여 파일 청소
-                              if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-                              if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
-                              if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
-                            });
-                          })
-
-            .on('error', (err) => {
-                    console.error('❌ FFmpeg 실패:', err.message);
-                    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
-                    if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
-                    res.status(500).json({ success: false, error: "동영상 변환 실패" });
-                  })
-                  .run();
-            
-     } catch (error) {
-        console.error('❌ 예외 처리 진입:', error);
+        
+        res.download(outputVideoPath, 'birthday-video.mp4', (err) => {
+          if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+          if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+          if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
+        });
+      })
+      .on('error', (err) => {
+        console.error('❌ FFmpeg 실패:', err.message);
         if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
         if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
         res.status(500).json({ success: false, error: "동영상 변환 실패" });
-      }
-    });
+      })
+      .run();
+
+  } catch (error) {
+    console.error('❌ 예외 처리 진입:', error);
+    if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
+    if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+    res.status(500).json({ success: false, error: "동영상 변환 실패" });
+  }
+});
 
 // ==========================================
-// 🚀 [Vite SSR 통합 및 서버 최종 스타트]
+// 🚀 [Vite SSR 통합 및 서버 스타트]
 // ==========================================
 async function startServer() {
   app.use('/*splat', async (req, res, next) => {

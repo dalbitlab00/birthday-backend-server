@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase-admin/auth';
-import { User } from '../models/User.js';
+import { User }  from '../models/User.js';
 
 /**
  * 🔐 파이어베이스 ID 토큰을 실시간 검증하는 보안 문지기 미들웨어
