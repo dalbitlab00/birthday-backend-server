@@ -276,13 +276,20 @@ router.post('/api/pets', async (req, res) => {
       });
     }
 
-    // 날짜 객체 변환 및 월/일 추출
-    const dateObj = new Date(birthDate);
-    // UTC 기준 또는 서버 시간 기준으로 월/일 파싱 (JavaScript getUTCMonth는 0~11 반환하므로 +1)
-    const birthMonth = dateObj.getUTCMonth() + 1;
-    const birthDay = dateObj.getUTCDate();
+    // 날짜 파싱 (YYYY-MM-DD 형식 기준 안전 처리)
+    let birthMonth, birthDay, dateObj;
+    
+    if (typeof birthDate === 'string' && birthDate.includes('-')) {
+      const parts = birthDate.split('-').map(Number);
+      dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+      birthMonth = parts[1];
+      birthDay = parts[2];
+    } else {
+      dateObj = new Date(birthDate);
+      birthMonth = dateObj.getMonth() + 1;
+      birthDay = dateObj.getDate();
+    }
 
-    // 회원 정보 업데이트 (마케팅 동의 업데이트 및 pets 배열에 새로 추가)
     const updatedUser = await User.findOneAndUpdate(
       { firebaseUid },
       {
@@ -296,7 +303,7 @@ router.post('/api/pets', async (req, res) => {
           }
         }
       },
-      { new: true } // 업데이트 후의 문서를 반환
+      { new: true, runValidators: true } // runValidators 추가로 스키마 유효성 검사 수행
     );
 
     if (!updatedUser) {
@@ -314,8 +321,6 @@ router.post('/api/pets', async (req, res) => {
     return res.status(500).json({ success: false, message: '서버 에러가 발생했습니다.' });
   }
 });
-
-export default router;
 
 // =================================================================
 // 💳 [API] 포트원 결제 완료 검증 및 크레딧 안전 충전소
