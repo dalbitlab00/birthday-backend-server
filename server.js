@@ -1,3 +1,5 @@
+import dns from 'node:dns';
+dns.setServers(['8.8.8.8', '1.1.1.1']); // 구글 및 클라우드플레어 DNS 강제 지정
 // 1. 가장 먼저 환경변수 장부를 로드하여 모든 비공개 키가 인식되도록 조치합니다.
 import dotenv from 'dotenv';
 dotenv.config();
@@ -262,6 +264,58 @@ app.get('/api/user/profile', authMiddleware, (req, res) => {
     credits: req.user.credits
   });
 });
+
+router.post('/api/pets', async (req, res) => {
+  try {
+    const { firebaseUid, petName, birthDate, marketingEmailOptIn } = req.body;
+
+    if (!firebaseUid || !petName || !birthDate) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'firebaseUid, petName, birthDate는 필수 항목입니다.' 
+      });
+    }
+
+    // 날짜 객체 변환 및 월/일 추출
+    const dateObj = new Date(birthDate);
+    // UTC 기준 또는 서버 시간 기준으로 월/일 파싱 (JavaScript getUTCMonth는 0~11 반환하므로 +1)
+    const birthMonth = dateObj.getUTCMonth() + 1;
+    const birthDay = dateObj.getUTCDate();
+
+    // 회원 정보 업데이트 (마케팅 동의 업데이트 및 pets 배열에 새로 추가)
+    const updatedUser = await User.findOneAndUpdate(
+      { firebaseUid },
+      {
+        $set: { marketingEmailOptIn: Boolean(marketingEmailOptIn) },
+        $push: {
+          pets: {
+            petName,
+            birthDate: dateObj,
+            birthMonth,
+            birthDay
+          }
+        }
+      },
+      { new: true } // 업데이트 후의 문서를 반환
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: '반려동물 생일 정보가 성공적으로 저장되었습니다.',
+      data: updatedUser
+    });
+
+  } catch (error) {
+    console.error('반려동물 등록 에러:', error);
+    return res.status(500).json({ success: false, message: '서버 에러가 발생했습니다.' });
+  }
+});
+
+export default router;
 
 // =================================================================
 // 💳 [API] 포트원 결제 완료 검증 및 크레딧 안전 충전소
